@@ -1,0 +1,23 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "create test",
+            "request": "launch",
+            "program": "test/integration/pm-create.dart",
+            "type": "dart",
+            "flutterMode": "debug"
+        },
+        {
+            "name": "open test",
+            "request": "launch",
+            "program": "test/integration/pm-open.dart",
+            "type": "dart",
+            "flutterMode": "debug"
+        },
+        
+    ]
+}
