@@ -27,17 +27,17 @@ void main() {
 
     expect(projectId, isNotNull);
     stopwatch.reset();
-    await projectManager.tts(
+    await projectManager.addTTS(
         "who is this girl", "en", const Duration(seconds: 1));
 
-    await projectManager.tts(
-        "she looks so beutiful", "en", const Duration(seconds: 3));
+    /*await projectManager.addTTS(
+        "she looks so beutiful", "en", const Duration(seconds: 3));*/
 
-    await projectManager.tts(
-        "she looks so beutiful", "en", const Duration(seconds: 6));
+    /* await projectManager.addTTS(
+        "she looks so beutiful", "en", const Duration(seconds: 6));*/
 
-    await projectManager.tts(
-        "she looks so beutiful", "en", const Duration(seconds: 8));
+    /* await projectManager.addTTS(
+        "she looks so beutiful", "en", const Duration(seconds: 8));*/
 
     print("tts took ${stopwatch.elapsedMilliseconds} ms");
     stopwatch.reset();

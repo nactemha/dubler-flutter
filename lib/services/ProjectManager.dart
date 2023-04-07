@@ -3,6 +3,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dubbler/services/SubtitleUtil.dart';
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter/return_code.dart';
@@ -10,6 +11,7 @@ import 'package:ffmpeg_kit_flutter/session_state.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:media_store_plus/media_store_plus.dart';
+import 'package:subtitle/subtitle.dart';
 import 'package:uuid/uuid.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -19,12 +21,14 @@ class VoiceInfo {
   String language;
   String fileName;
   Duration offset;
+  Duration duration = Duration.zero;
   double volume = 1.0;
   VoiceInfo({
     required this.text,
     required this.language,
     required this.fileName,
     required this.offset,
+    required this.duration,
     this.volume = 1.0,
   });
   Map toJson() => {
@@ -32,6 +36,7 @@ class VoiceInfo {
         "language": language,
         "fileName": fileName,
         "offset": offset.inMilliseconds,
+        "duration": duration.inMilliseconds,
         "volume": volume,
       };
   factory VoiceInfo.fromJson(Map<String, dynamic> json) {
@@ -40,6 +45,7 @@ class VoiceInfo {
       language: json['language'],
       fileName: json['fileName'],
       offset: Duration(milliseconds: json['offset']),
+      duration: Duration(milliseconds: json['duration']),
       volume: json['volume'],
     );
   }
@@ -71,6 +77,7 @@ class ProjectManager extends ChangeNotifier {
     "sourceMediaPath": "",
     "ext": "",
     "created": DateTime.now().toIso8601String(),
+    "language": "en",
   };
   late Directory _baseFolder;
   late Directory _projectFolder;
@@ -106,6 +113,16 @@ class ProjectManager extends ChangeNotifier {
     setMeta("ext", value);
     notifyListeners();
   }
+
+  String get subtitleFiles => getMeta("subtitle_files");
+  set _subtitleFiles(String value) {
+    setMeta("subtitle_files", value);
+    notifyListeners();
+  }
+
+  String get language => getMeta("language");
+
+  String get subtitleFilePath => "${_projectFolder.path}/voices.srt";
 
   String get renderedMediaPath => "${_projectFolder.path}/rendered.$fileExt";
 
@@ -259,7 +276,7 @@ class ProjectManager extends ChangeNotifier {
     return projects;
   }
 
-  Future<VoiceInfo> tts(String text, String language, Duration offset,
+  Future<VoiceInfo> addTTS(String text, String language, Duration offset,
       {double? volume}) async {
     var wav = await _callTTSApi(text, language);
     var voiceFileName = '${Uuid().v1().toString()}.wav';
@@ -270,13 +287,14 @@ class ProjectManager extends ChangeNotifier {
         language: language,
         fileName: voiceFileName,
         offset: offset,
+        duration: const Duration(seconds: 1),
         volume: volume ?? 1.0);
     addVoiceToMeta(voiceInfo);
     notifyListeners();
     return voiceInfo;
   }
 
-  Future removeTts(String fileName) async {
+  Future removeTTTS(String fileName) async {
     var voices = getMeta("voices") as List<VoiceInfo>;
     var voiceInfo =
         voices.firstWhere((element) => element.fileName == fileName);
@@ -286,19 +304,38 @@ class ProjectManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future render() async {
+  Future updateSubtitleFiles() async {
+    var voices = getMeta("voices") as List<VoiceInfo>;
+    voices.sort((a, b) => a.offset.compareTo(b.offset));
+    var subtitles = <Subtitle>[];
+    for (var i = 0; i < voices.length; i++) {
+      var voice = voices[i];
+      var subtitle = Subtitle(
+          index: i,
+          start: voice.offset,
+          end: voice.offset + voice.duration,
+          data: voice.text);
+
+      subtitles.add(subtitle);
+    }
+    if (await File(subtitleFilePath).exists()) {
+      await File(subtitleFilePath).delete();
+    }
+    var srtString = SubtitleUtil().generateSRT(subtitles);
+    await File(subtitleFilePath).writeAsString(srtString);
+  }
+
+  Future render({String subtitleRenderMode = ""}) async {
     var voices = getMeta("voices") as List<VoiceInfo>;
     voices.sort((a, b) => a.offset.compareTo(b.offset));
 
-    var inputs = "";
-    var volumes = "";
-    var mix = "";
+    var source_input = " -i $sourceMediaPath";
 
-    inputs += " -i $sourceMediaPath";
+    var voices_inputs = "";
     for (var i = 0; i < voices.length; i++) {
       var voice = voices[i];
       var path = "${_projectFolder.path}/${voice.fileName}";
-      inputs += " -i ${path}";
+      voices_inputs += " -i ${path}";
     }
 
     var delays = "";
@@ -309,26 +346,50 @@ class ProjectManager extends ChangeNotifier {
           "[${i + 1}:a]adelay=${voice.offset.inMilliseconds}:all=true[a${i + 1}];";
     }
 
+    var amix = "";
+    var volumes = "";
     if (sourceMediaVolume != 1.0) {
       volumes += "[0:a]volume=${sourceMediaVolume}[av0];";
-      mix += "[av0]";
+      amix += "[av0]";
     } else {
-      mix += "[0:a]";
+      amix += "[0:a]";
     }
     for (var i = 0; i < voices.length; i++) {
       var voice = voices[i];
       if (voice.volume == 1.0) {
-        mix += "[a${i + 1}]";
+        amix += "[a${i + 1}]";
         continue;
       }
       volumes += "[a${i + 1}]volume=${voice.volume}[av${i + 1}];";
-      mix += "[av${i + 1}]";
+      amix += "[av${i + 1}]";
+    }
+    amix += "amix=inputs=${voices.length + 1}[outa]";
+
+    var copyVideo = '-c:v copy';
+    var videoMap = '-map 0:v:0';
+    var audioMap = '-map "[outa]"';
+
+    if (subtitleRenderMode != "") {
+      await updateSubtitleFiles();
+    }
+    var subtitle_input = "";
+    var subtitle_map = "";
+    var subtitle_codec = "";
+    var subtitle_filter = "";
+    if (subtitleRenderMode == "burn") {
+      subtitle_input = '-vf subtitles=$subtitleFilePath';
+      copyVideo = '';
+    } else if (subtitleRenderMode == "text") {
+      subtitle_input = '-i ${subtitleFilePath}';
+      subtitle_map = '-map ${voices.length + 1}:0';
+      subtitle_codec = '-c:s mov_text';
     }
 
-    mix += "amix=inputs=${voices.length + 1}[outa]";
     var outputtmppath = "${_projectFolder.path}/renderedtmp.$fileExt";
+
     var cmd =
-        '$inputs -filter_complex "$delays $volumes $mix" -map 0:v:0 -map "[outa]" -c:v copy $outputtmppath';
+        '$source_input $voices_inputs $subtitle_input -filter_complex "$delays$volumes$amix$subtitle_filter" $videoMap $audioMap $subtitle_map $copyVideo $subtitle_codec $outputtmppath';
+    //'$inputs $subtitle -filter_complex "$delays $volumes $mix" -map 0:v:0 -map "[outa]" -c:v copy $outputtmppath';
 
     _isRendering = true;
 
@@ -346,7 +407,7 @@ class ProjectManager extends ChangeNotifier {
     final state = await session.getState();
 
     // Return code for completed sessions. Will be undefined if session is still running or FFmpegKit fails to run it
-    //final returnCode = await session.getReturnCode();
+    final returnCode = await session.getReturnCode();
 
     //final startTime = session.getStartTime();
     //final endTime = await session.getEndTime();
@@ -359,12 +420,17 @@ class ProjectManager extends ChangeNotifier {
     //final failStackTrace = await session.getFailStackTrace();
 
     // The list of logs generated for this execution
-    //final logs = await session.getLogs();
+    final logs = await session.getLogs();
+    print(logs);
+    print(logs[logs.length - 1].getMessage());
 
     // The list of statistics generated for this execution (only available on FFmpegSession)
     //final statistics = await (session as FFmpegSession).getStatistics();
 
     _isRendering = false;
+    if (returnCode.toString() != "0") {
+      throw Exception('Failed to render');
+    }
     if (state == SessionState.completed) {
       if (await File(renderedMediaPath).exists()) {
         await File(renderedMediaPath).delete();

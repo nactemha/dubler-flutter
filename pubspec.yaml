@@ -47,6 +47,8 @@ dependencies:
   media_store_plus: ^0.0.6
   wechat_assets_picker: ^8.4.1
   file_picker: ^5.2.7
+  subtitle: ^0.1.0-beta.3
+  
 
 dev_dependencies:
   flutter_test:

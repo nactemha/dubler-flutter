@@ -27,11 +27,12 @@ void main() {
     print('subProject $subProject');
     await projectManager.open(subProject.id);
     Stopwatch stopwatch = new Stopwatch()..start();
-    await projectManager.tts(
+    await projectManager.addTTS(
         "hey whats app baby", "en", const Duration(seconds: 10));
-    await projectManager
-        .tts("whats going on ", "en", const Duration(seconds: 20), volume: 15);
-    await projectManager.tts(
+    await projectManager.addTTS(
+        "whats going on ", "en", const Duration(seconds: 20),
+        volume: 15);
+    await projectManager.addTTS(
         "who is talking", "en", const Duration(seconds: 15));
     print("----------tts took ${stopwatch.elapsedMilliseconds} ms");
     stopwatch.reset();
